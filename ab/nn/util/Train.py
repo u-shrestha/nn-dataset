@@ -1,13 +1,10 @@
 import importlib
 import sys
 import time as time
-from os.path import join
+from dataclasses import dataclass, asdict
+from typing import List, Optional
 from typing import Union
-from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Any, Optional
 
-import numpy as np
-import torch
 from torch.cuda import OutOfMemoryError
 
 import ab.nn.util.CodeEval as codeEvaluator
@@ -157,9 +154,7 @@ class Train:
         self.train_loader = train_loader_f(self.train_dataset, self.batch, num_workers)
         self.test_loader = test_loader_f(self.test_dataset, self.batch, num_workers)
 
-        for input_tensor, _ in self.train_loader:
-            self.in_shape = np.array(input_tensor).shape  # Model input tensor shape (e.g., (8, 3, 32, 32) for a batch size 8, RGB image 32x32 px).
-            break
+        self.in_shape = get_in_shape(train_dataset, num_workers) # Model input tensor shape (e.g., (8, 3, 32, 32) for a batch size 8, RGB image 32x32 px).
         self.device = torch_device()
 
         # Load model
@@ -351,11 +346,11 @@ class Train:
 
         # Save training summary at the end
         if save_path and self.epoch_history:
-            self._save_training_summary(save_path)
+            self._save_training_summary()
 
         return accuracy, accuracy_to_time, duration
 
-    def _save_training_summary(self, save_path):
+    def _save_training_summary(self):
         """Save comprehensive training summary"""
         import json
         summary = {
@@ -391,7 +386,7 @@ class Train:
             'epoch_details': [asdict(e) for e in self.epoch_history]
         }
 
-        summary_path = join(save_path, "training_summary.json")
+        summary_path = out_dir / 'training_summary.json'
         try:
             with open(summary_path, 'w') as f:
                 json.dump(summary, f, indent=2)

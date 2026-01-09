@@ -4,16 +4,19 @@ from tqdm import tqdm
 
 from ab.nn.util.Util import *
 from ab.nn.util.db.Init import init_db, sql_conn, close_conn
-
+from ab.nn.util.hf.DB_from_HF import db_from_hf
 
 def init_population():
     if not db_file.exists():
-        init_db()
-        json_train_to_db()
-        try:
-            json_run_to_db()
-        except Exception as e:
-            print(f"Runtime analytics import failed: {e}")
+        if stat_dir.exists():
+            init_db()
+            json_train_to_db()
+            try:
+                json_run_to_db()
+            except Exception as e:
+                print(f"Runtime analytics import failed: {e}")
+        else:
+            db_from_hf()
 
 
 def code_to_db(cursor, table_name, code=None, code_file=None, force_name = None):
@@ -53,14 +56,6 @@ def populate_code_table(table_name, cursor, name=None):
     # print(f"{table_name} added/updated in the `{table_name}` table: {[f.stem for f in code_files]}")
 
 
-# def populate_prm_table(table_name, cursor, prm, uid):
-#     """
-#     Populate the parameter table with variable number of parameters of different types.
-#     """
-#     for nm, value in prm.items():
-#         cursor.execute(f"INSERT INTO {table_name} (uid, name, value, type) VALUES (?, ?, ?, ?)",
-#                        (uid, nm, str(value), type(value).__name__))
-
 def populate_prm_table(table_name, cursor, prm, uid):
     """
     Insert every hyperparameter in its native Python type.
@@ -92,14 +87,13 @@ def json_train_to_db():
     Reload all statistics into the database for all subconfigs and epochs.
     """
     conn, cursor = sql_conn()
-    stat_base_path = Path(stat_train_dir)
-    sub_configs = [d.name for d in stat_base_path.iterdir() if d.is_dir()]
+    sub_configs = [d.name for d in stat_train_dir.iterdir() if d.is_dir()]
 
     print(f"Importing all statistics from JSON files in {stat_train_dir} into database {db_file} ...")
 
     last_error = None
     for sub_config_str in tqdm(sub_configs):
-        model_stat_dir = stat_base_path / sub_config_str
+        model_stat_dir = stat_train_dir / sub_config_str
 
         for epoch_file in Path(model_stat_dir).iterdir():
             model_stat_file = model_stat_dir / epoch_file
@@ -164,25 +158,50 @@ def json_run_to_db():
             duration = data.get('duration')
             device_analytics = data.get('device_analytics')
             analytics_json = json.dumps(device_analytics) if device_analytics is not None else None
+            
+            # New fields
+            extra_vals = {f: data.get(f) for f in [
+                'iterations', 'unit',
+                'cpu_duration', 'cpu_min_duration', 'cpu_max_duration', 'cpu_std_dev', 'cpu_error',
+                'gpu_duration', 'gpu_min_duration', 'gpu_max_duration', 'gpu_std_dev', 'gpu_error',
+                'npu_duration', 'npu_min_duration', 'npu_max_duration', 'npu_std_dev', 'npu_error',
+                'total_ram_kb', 'free_ram_kb', 'available_ram_kb', 'cached_kb',
+                'in_dim_0', 'in_dim_1', 'in_dim_2', 'in_dim_3'
+            ]}
 
             id_val = uuid4([run_dir.name, json_file.name, model_name, device_type, os_version, duration])
+            
+            columns = [
+                'id', 'model_name', 'device_type', 'os_version', 'valid', 'emulator', 'error_message', 'duration',
+                'iterations', 'unit', 'cpu_duration', 'cpu_min_duration', 'cpu_max_duration', 'cpu_std_dev', 'cpu_error',
+                'gpu_duration', 'gpu_min_duration', 'gpu_max_duration', 'gpu_std_dev', 'gpu_error',
+                'npu_duration', 'npu_min_duration', 'npu_max_duration', 'npu_std_dev', 'npu_error',
+                'total_ram_kb', 'free_ram_kb', 'available_ram_kb', 'cached_kb',
+                'in_dim_0', 'in_dim_1', 'in_dim_2', 'in_dim_3',
+                'device_analytics_json'
+            ]
+            
+            placeholders = ', '.join(['?'] * len(columns))
+            col_names = ', '.join(columns)
+            
+            values = [
+                id_val, model_name, device_type, os_version, valid, emulator, error_message, duration,
+                extra_vals['iterations'], extra_vals['unit'], 
+                extra_vals['cpu_duration'], extra_vals['cpu_min_duration'], extra_vals['cpu_max_duration'], extra_vals['cpu_std_dev'], extra_vals['cpu_error'],
+                extra_vals['gpu_duration'], extra_vals['gpu_min_duration'], extra_vals['gpu_max_duration'], extra_vals['gpu_std_dev'], extra_vals['gpu_error'],
+                extra_vals['npu_duration'], extra_vals['npu_min_duration'], extra_vals['npu_max_duration'], extra_vals['npu_std_dev'], extra_vals['npu_error'],
+                extra_vals['total_ram_kb'], extra_vals['free_ram_kb'], extra_vals['available_ram_kb'], extra_vals['cached_kb'],
+                extra_vals['in_dim_0'], extra_vals['in_dim_1'], extra_vals['in_dim_2'], extra_vals['in_dim_3'],
+                analytics_json
+            ]
+
             cursor.execute(
                 f"""
                 INSERT OR REPLACE INTO {run_table}
-                (id, model_name, device_type, os_version, valid, emulator, error_message, duration, device_analytics_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ({col_names})
+                VALUES ({placeholders})
                 """,
-                (
-                    id_val,
-                    model_name,
-                    device_type,
-                    os_version,
-                    valid,
-                    emulator,
-                    error_message,
-                    duration,
-                    analytics_json,
-                ),
+                values,
             )
     close_conn(conn)
 

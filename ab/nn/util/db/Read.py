@@ -39,11 +39,12 @@ def data(only_best_accuracy: bool = False,
          task: Optional[str] = None,
          dataset: Optional[str] = None,
          metric: Optional[str] = None,
-         nn: Optional[str] = None,
+         nn: Optional[str | tuple[str]] = None,
          epoch: Optional[int] = None,
          max_rows: Optional[int] = None,
          nn_prefixes: Optional[tuple] = None,
          sql: Optional[JoinConf] = None,
+         unique_nn: bool = False,
          ) -> tuple[
     dict[str, int | float | str | dict[str, int | float | str]], ...
 ]:
@@ -61,7 +62,7 @@ def data(only_best_accuracy: bool = False,
       - 'dataset': str
       - 'metric': str
       - 'metric_code': str    (source code from the metric table)
-      - 'nn': str
+      - 'nn': str or tuple[str]
       - 'nn_code': str        (source code from the nn table)
       - 'epoch': int
       - 'accuracy': float
@@ -72,12 +73,12 @@ def data(only_best_accuracy: bool = False,
 
     # Build filtering conditions based on provided parameters.
     params, where_clause = sql_where([task, dataset, metric, nn, epoch])
-
     if nn_prefixes:
         where_clause += ' AND (' + ' OR '.join([f"nn LIKE '{prefix}%'" for prefix in nn_prefixes]) + ')'
 
     source = f'(SELECT s.* FROM stat s {where_clause})'
-
+    if unique_nn:
+        source = f'(SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY nn ORDER BY accuracy DESC) rn FROM {source}) WHERE rn = 1)'
     if only_best_accuracy:
         source = """
             (WITH filtered_stat AS {source}
@@ -121,6 +122,7 @@ def data(only_best_accuracy: bool = False,
     finally:
         if conn: close_conn(conn)
 
+
 def run_data(
         model_name: str | None = None,
         device_type: str | None = None,
@@ -146,7 +148,12 @@ def run_data(
     try:
         cur.execute(
             f"""
-            SELECT id, model_name, device_type, os_version, valid, emulator, error_message, duration, device_analytics_json
+            SELECT id, model_name, device_type, os_version, valid, emulator, error_message, duration,
+                   iterations, unit, cpu_duration, cpu_min_duration, cpu_max_duration, cpu_std_dev, cpu_error,
+                   gpu_duration, gpu_min_duration, gpu_max_duration, gpu_std_dev, gpu_error,
+                   npu_duration, npu_min_duration, npu_max_duration, npu_std_dev, npu_error,
+                   total_ram_kb, free_ram_kb, available_ram_kb, cached_kb,
+                   in_dim_0, in_dim_1, in_dim_2, in_dim_3, device_analytics_json
             FROM {run_table}
             {where_clause}
             ORDER BY model_name
@@ -176,8 +183,13 @@ def sql_where(value_list):
     params = []
     for nm, v in zip(main_columns_ext, value_list):
         if v is not None:
-            filters.append(f"s.{nm} = ?")
-            params.append(v)
+            if isinstance(v, tuple):
+                phs = ",".join("?" for _ in v)
+                filters.append(f"s.{nm} in ({phs})")
+                params.extend(v)
+            else:
+                filters.append(f"s.{nm} = ?")
+                params.append(v)
     return params, ' WHERE ' + ' AND '.join(filters) if filters else ''
 
 

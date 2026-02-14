@@ -1,4 +1,6 @@
 from typing import Any, Callable, List, Optional, Type, Union
+import importlib
+from functools import partial 
 
 import torch
 import torch.nn as nn
@@ -134,16 +136,50 @@ class Net(nn.Module):
         self.criteria = (nn.CrossEntropyLoss().to(self.device),)
         self.optimizer = torch.optim.SGD(self.parameters(), lr=prm['lr'], momentum=prm['momentum'])
 
+        self.batch_transform_fn = None
+        
+        if prm.get('augment'): 
+            try:
+                mod = importlib.import_module(f"ab.nn.transform.base_augment.batch_transform")
+                
+                self.batch_transform_fn = partial(
+                    mod.batch_transform, 
+                    augments=prm.get('augment'), 
+                    probs=prm.get('probs'),
+                    alpha=prm.get('alpha', 1.0)            
+                )
+                
+                print(f"Augmentation loaded: Augment={prm.get('augment')}, Probs={prm.get('probs')}, Alpha={prm.get('alpha', 1.0)}")
+
+            except ImportError as e:
+                print(f"Failed to load transform: {e}")
+
+
     def learn(self, train_data):
         for inputs, labels in train_data:
             inputs, labels = inputs.to(self.device), labels.to(self.device)
             self.optimizer.zero_grad()
-            outputs = self(inputs)
-            loss = self.criteria[0](outputs, labels)
+
+            if self.batch_transform_fn:
+                # Returns the modified input and the two targets + lambda
+                inputs, target_a, target_b, lam = self.batch_transform_fn(inputs, labels)
+                
+                # Forward pass
+                outputs = self(inputs)
+                
+                # Loss for both targets and mix them based on lambda
+                loss = lam * self.criteria[0](outputs, target_a) + (1. - lam) * self.criteria[0](outputs, target_b)
+            
+            else:
+                # Standard training 
+                outputs = self(inputs)
+                loss = self.criteria[0](outputs, labels)
+
             loss.backward()
             nn.utils.clip_grad_norm_(self.parameters(), 3)
             self.optimizer.step()
-
+    
+    
     def __init__(self, in_shape: tuple, out_shape: tuple, prm: dict, device: torch.device) -> None:
         super().__init__()
         self.device = device

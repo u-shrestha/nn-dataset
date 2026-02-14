@@ -144,7 +144,7 @@ class Net(nn.Module):
                 
                 self.batch_transform_fn = partial(
                     mod.batch_transform, 
-                    augments=prm.get('augment'), 
+                    augment=prm.get('augment'), 
                     probs=prm.get('probs'),
                     alpha=prm.get('alpha', 1.0)            
                 )

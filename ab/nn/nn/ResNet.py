@@ -144,9 +144,10 @@ class Net(nn.Module):
                 from ab.nn.transform.base.BatchTransform import batch_transform as bt
                 self.batch_transform_fn = bt
                 self.augment_configs = prm.get('augment')
-                print(f"Augmentation loaded: {self.augment_configs}")  
+                logging.info(f"Augmentation loaded successfully: {self.augment_configs}")  
             except ImportError as e:
-                print(f"Failed to load batch_transform: {e}")
+                logging.error(f"Failed to load batch_transform: {e}")
+        
 
     def learn(self, train_data):
         total_batches = len(train_data)

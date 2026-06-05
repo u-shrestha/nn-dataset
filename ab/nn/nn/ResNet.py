@@ -8,6 +8,8 @@ from torch import Tensor
 from torchvision.models._api import WeightsEnum
 from torchvision.models._utils import _ovewrite_named_param
 
+import logging
+
 
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv2d:
     return nn.Conv2d(
